@@ -50,7 +50,7 @@ const AppStore = {
     const vExclude = new Set(
       resolved.vertex.values.filter(f => f.vertexExclude).map(f => f.vertexQuestion)
     )
-    const eExclude = new Set(['vertex1', 'vertex2','source','target'])
+    const eExclude = new Set(['vertex1', 'vertex2', 'source', 'target'])
 
     // we also need to exclude any source/targets that are derived from excluded node values
     resolved.edge.values.forEach(f => {
@@ -175,11 +175,21 @@ const AppStore = {
     if (!ss) throw `Couldn't open spreadhseet id ${id}`
 
     // get the export data 
-    const outputName = resolved.output.values && resolved.output.values[0] && resolved.output.values[0].outputName
-    if (!outputName || !outputName.toString) throw `unable to find proper output-name`
-    return {
-      parent: ss.getParents().next(),
-      outputName: outputName.toString()
+    const opn = resolved.output.values && resolved.output.values[0] && resolved.output.values[0].outputName
+    if (!opn || !opn.toString) throw `unable to find proper output-name`
+    const outputName = opn.toString()
+    try {
+      const parents = ss.getParents()
+      return {
+        parent: parents.hasNext() ? parents.next() : null,
+        outputName,
+      }
+
+    } catch (err) {
+      return {
+        parent: null,
+        outputName: outputName.toString()
+      }
     }
 
   },
@@ -206,7 +216,14 @@ const AppStore = {
 
     // write it out
     console.log('...writing', outputName)
-    const p = parent.createFile(outputName, rendered, 'application/graphml+xml')
+    let p = null
+    // perhaps you don't have write access to the config folder
+    try {
+      p = parent.createFile(outputName, rendered, 'application/graphml+xml')
+    } catch (err) {
+      as.toast("You dont have write access to the config folder", "Writing to default Drive instead")
+      p = DriveApp.createFile(outputName, rendered, 'application/graphml+xml')
+    }
     as.toast(
       `Created ${outputName} in Drive folder ${parent.getName()}`,
       `Export complete`, 3)
@@ -940,7 +957,7 @@ const AppStore = {
 
     edgesFiddler.setData(edgeData)
       .setHeaderFormat(headFormat)
-    
+
     as.applyEdgeFormatSettings(edgesFiddler, edgeDefaultsFiddler)
 
     // important to postpone dump values till after applying edge format settings
