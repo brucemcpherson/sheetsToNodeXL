@@ -187,7 +187,7 @@ const AppStore = {
 
     } catch (err) {
       return {
-        parent: null,
+        parent: 'root',
         outputName: outputName.toString()
       }
     }
@@ -269,7 +269,7 @@ const AppStore = {
     // when it's associated with a sheet this'll uset he active ss
     // this is just an id we can use while testing detached
     // it can be changed as requried - it's ignored when used in container mode
-    const testId = '126V5jnOSrC-pMK5nKOUQPELvlmpGzxFIpfWKvX6Odwo'
+    const testId = '1BoKul0Le2k4G4qTy9lGOMt5szjct3z5m3bR_ZJ0EXuc' //'126V5jnOSrC-pMK5nKOUQPELvlmpGzxFIpfWKvX6Odwo'
 
     configId = configId || testId
     const edgeDefaultsId = configId
