@@ -1,5 +1,5 @@
 # Google Apps Script Project: sheetsToNodeXL
-This repo (sheetsToNodeXL) was automatically updated on 6/26/2023, 11:27:48 AM by GasGit
+This repo (sheetsToNodeXL) was automatically updated on 1/31/2024, 1:16:28 PM by GasGit
 
 For more information on gasgit, see the [desktop liberation site](https://ramblings.mcpher.com/drive-sdk-and-github/migrategasgit/ "desktop liberation")
 
@@ -18,17 +18,20 @@ The shared link for [sheetsToNodeXL is here](https://script.google.com/d/1-E7kfc
 appsscript| json
 Exports| server_js
 app/AppStore| server_js
+app/DeveloperData| server_js
+app/DriveExports| server_js
+app/Helpers| server_js
+app/Memory| server_js
 app/Setup| server_js
+app/test| server_js
+lib/bmFiddler| server_js
+lib/bmPreFiddler| server_js
+lib/bmUtils| server_js
 xml/Gml| server_js
 xml/Html| server_js
 xml/HtmlEncoder| server_js
 xml/anyMl| server_js
 xml/xmlWrapper| server_js
-debug/triggers| server_js
-lib/bmFiddler| server_js
-lib/bmPreFiddler| server_js
-lib/bmUtils| server_js
-app/Memory| server_js
 ### Directly referenced libraries
 no libraries discovered
 ### All dependencies and sub dependencies
