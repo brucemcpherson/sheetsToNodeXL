@@ -7,6 +7,32 @@ const Utils = (() => {
   const isNull = (value) => value === null
   const isNU = (value) => isNull(value) || isUndefined(value)
   const isUndefined = (value) => typeof value === typeof undefined
+  const isSheetsNU = (value) => isNU(value) || value === ''
+  
+  // return a rx where special chars in the string have been escaped
+  const escapedRx = (str) => 
+    new RegExp (escapeStringforRx(str))
+
+  const escapeStringforRx = (str) => 
+    str.replace(/[.*+?^${}()|[\]\\]/gm, "\\$&") 
+
+  const snakeToCamel = (snake) => {
+    return snake.toLowerCase()
+      .replace(/([-_][a-z])/g, group =>
+        group
+          .toUpperCase()
+          .replace('-', '')
+          .replace('_', ''))
+  }
+
+  const dropProps = (ob, dropFunc ) => {
+    dropFunc = dropFunc || ((o,p) => isSheetsNU(o[p]))
+    if(!ob) return ob
+    return ob && Reflect.ownKeys(ob).reduce ((p,c) => {
+      if (!dropFunc(ob,c)) p[c] = ob[c]
+      return p
+    }, {})
+  }
 
   const singleSlash = (url) => {
     const s = url.replace(/\/+/g, '/')
@@ -23,19 +49,38 @@ const Utils = (() => {
     return yiq >= 128 ? '#212121' : '#ffffff'
   }
 
+  const hasher= (key) => {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash += key.charCodeAt(i);
+    }
+    return hash
+  }
+
+  const hashDigest = (...args)=> digesterB (...args).reduce ((p,c,i)=> p + ((i+1)*Math.abs(c)),0)
+
+  /**
+   * create a key from arbitrary args
+   * @param {...*} var_args
+   * return {byte[]}
+   */
+  digesterB = (...args) => {
+    // conver args to an array and digest them
+    const t = args.map(function (d) {
+      if (typeof d === typeof undefined) throw new Error('digester key component cant be undefined')
+      return (Object(d) === d) ? JSON.stringify(d) : d.toString();
+    }).join("-")
+    const b = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_1, t, Utilities.Charset.UTF_8)
+    return b
+  }
+
   /**
    * create a key from arbitrary args
    * @param {...*} var_args
    * return {string}
    */
   digester = (...args) => {
-    // conver args to an array and digest them
-    const t = args.map(function (d) {
-      if (typeof d === typeof undefined) throw new Error('digester key component cant be undefined')
-      return (Object(d) === d) ? JSON.stringify(d) : d.toString();
-    }).join("-")
-    const s = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_1, t, Utilities.Charset.UTF_8)
-    return Utilities.base64EncodeWebSafe(s)
+    return Utilities.base64EncodeWebSafe(digesterB(...args))
   }
 
   // assume color is #hhhhhh
@@ -292,6 +337,9 @@ const Utils = (() => {
   }
 
   return {
+    snakeToCamel,
+    hasher,
+    hashDigest,
     md5FromText,
     flubber,
     chunker,
@@ -339,7 +387,11 @@ const Utils = (() => {
     isString,
     isArray,
     isFunction,
-    elapsedSecs: (start, finish) => Math.round((new Date().getTime(finish) - new Date(start).getTime()) / 1000)
+    elapsedSecs: (start, finish) => Math.round((new Date().getTime(finish) - new Date(start).getTime()) / 1000),
+    dropProps,
+    isSheetsNU,
+    escapedRx,
+    escapeStringforRx
   }
 })()
 
