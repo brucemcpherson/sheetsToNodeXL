@@ -1,6 +1,5 @@
 var Exports = {
 
-
   get Memory (){
     return Memory
   },
@@ -22,6 +21,13 @@ var Exports = {
     return StorePack
   },
 
+  /**
+   * DeveloperData object proxy
+   * @return {DeveloperData}
+   */
+  get DeveloperData() {
+    return this.guard(DeveloperData)
+  },
 
   /**
    * AppStore object proxy
@@ -79,6 +85,20 @@ var Exports = {
    */
   get Setup() {
     return Setup
+  },
+
+  /**
+   * hive off some of the appstore stuff
+   */
+  get Helpers() {
+    return this.guard(Helpers)
+  },
+
+  /**
+   * hive off some of the appstore stuff
+   */
+  get DriveExports() {
+    return this.guard(DriveExports)
   },
 
   /**
