@@ -3,7 +3,6 @@
  * since it uses server, html service and cardservice
  * all state management and communication between them is handled here
  */
-
 const StorePack = (() => {
 
   // this app only uses memory cache as no persistence is needed ot api calls cached
@@ -31,15 +30,42 @@ const StorePack = (() => {
  */
 const AppStore = {
 
-
   //----main execution functions-------------------
+  get dobKey() {
+    return 'ingest_details'
+  },
 
-  //render as gml
+  //-- execute a resolve followed by a sheet populate
+  execute() {
+    const as = this
+    return as.resolve()
+  },
+
+  //--- render as gml
   render(resolved) {
 
     const as = this
     const u = Exports.Utils
+    const hs = Exports.Helpers
     const { verticesFiddler, edgesFiddler, configuration } = as
+
+    // get the developer data
+    const metaVertices = Exports.DeveloperData.getDob(verticesFiddler.getSheet(), as.dobKey)
+    const metaEdges = Exports.DeveloperData.getDob(edgesFiddler.getSheet(), as.dobKey)
+
+    // they should be the same
+    if (!metaVertices || !metaEdges)
+      hs.logThrow('cant find stamp of which config wrote this - run ingest again')
+
+
+    if (JSON.stringify(metaVertices) !== JSON.stringify(metaEdges)) {
+      hs.logThrow('the edges and vertices were not created by the same time/configuration - run ingest again')
+    }
+    const { configuration: metaConfig } = metaVertices
+    const { configurationPreFiddler } = configuration
+    configurationPreFiddler.sheetName = metaConfig.sheetName
+    configurationPreFiddler.id = metaConfig.ssid
+    as.toast('Using detected ingestion configuration', configurationPreFiddler.sheetName)
 
     // get the predefined nodexl keys
     const { template, edgeDefault } = configuration
@@ -84,7 +110,7 @@ const AppStore = {
     // make the nodes (vertices)
     const nodes = vData.map((f, i) => {
       const id = f['id-alias']
-      if (!id) throw `id-alias missing from ${JSON.stringify(f)}`
+      if (!id) hs.logThrow(`id-alias missing from ${JSON.stringify(f)}`)
       return {
         tag: 'node',
         attrs: {
@@ -161,80 +187,38 @@ const AppStore = {
     return g.render({ children })
   },
 
-  // execute a resolve followed by a sheet populate
-  execute() {
-    const as = this
-    return as.resolve()
-  },
-
-  exportDetails(resolved, configurationFiddler) {
-
-    // open the spreadsheet id to get its parent
-    const id = configurationFiddler.getSheet().getParent().getId()
-    const ss = DriveApp.getFileById(id)
-    if (!ss) throw `Couldn't open spreadhseet id ${id}`
-
-    // get the export data 
-    const opn = resolved.output.values && resolved.output.values[0] && resolved.output.values[0].outputName
-    if (!opn || !opn.toString) throw `unable to find proper output-name`
-    const outputName = opn.toString()
-    try {
-      const parents = ss.getParents()
-      return {
-        parent: parents.hasNext() ? parents.next() : null,
-        outputName,
-      }
-
-    } catch (err) {
-      return {
-        parent: 'root',
-        outputName: outputName.toString()
-      }
-    }
-
-  },
-
   dumpToDrive() {
-    const as = this
-    if (!as) throw `as not defined in dump to drive - proxy got lost`
-    const u = Exports.Utils
-    const { configurationFiddler } = as
-
-    as.toast(
-      `${as.getConfigToastie(configurationFiddler)}            ${as.getVersionToastie()}`,
-      `Exporting to graphml`)
-    //---- validate the config data has all it needs
-    const resolved = as.prepareResolve(configurationFiddler)
-    Reflect.ownKeys(resolved).forEach(k => as.validateAllThere(resolved[k]))
-
-    // get the drive parent - same fo
-    const { parent, outputName } = as.exportDetails(resolved, configurationFiddler)
-    if (!parent) throw `Couldn't find parent for ${outputName}`
-
-    // render the whole thing
-    const rendered = as.render(resolved)
-
-    // write it out
-    console.log('...writing', outputName)
-    let p = null
-    // perhaps you don't have write access to the config folder
-    try {
-      p = parent.createFile(outputName, rendered, 'application/graphml+xml')
-    } catch (err) {
-      as.toast("You dont have write access to the config folder", "Writing to default Drive instead")
-      p = DriveApp.createFile(outputName, rendered, 'application/graphml+xml')
-    }
-    as.toast(
-      `Created ${outputName} in Drive folder ${parent.getName()}`,
-      `Export complete`, 3)
-    return p
-
+    const dd = Exports.DriveExports
+    return dd.dumpToDrive()
   },
 
   //----end of main execution functions-------------------
 
 
   //----getting and setting values in store------------------
+  get breaking () {
+    return this.memory.get('breaking')
+  },
+  set breaking (value) {
+    return this.memory.set ('breaking', value)
+  },
+  get brokenBefore () {
+    return this.memory.get('brokenBefore')
+  },
+  set brokenBefore (value) {
+    return this.memory.set ('brokenBefore', value)
+  },
+  // the stub will set a value for breaking
+  // if its less than this value then there's been a breaking change in the
+  // library that needs a stub change
+  isBroken () {
+    const u = Exports.Utils
+    const as = this
+    const minStub = as.brokenBefore
+    if (u.isNU(as.breaking) || as.breaking < minStub) {
+      throw 'You need to upgrade the stub script in your sheet to v' + minStub
+    }
+  },
   get stubVersion() {
     return this.memory.get('stubVersion')
   },
@@ -259,123 +243,16 @@ const AppStore = {
     this.memory.clear()
   },
 
-
-  initConfigurations(configId) {
-    const as = this
-    // all the artefacts can be in different sheets,
-    // but by default everything (other than the input data
-    // happens in the cloned config spreadsheet
-    // for testing we're doing it all here 
-    // when it's associated with a sheet this'll uset he active ss
-    // this is just an id we can use while testing detached
-    // it can be changed as requried - it's ignored when used in container mode
-    const testId = '1BoKul0Le2k4G4qTy9lGOMt5szjct3z5m3bR_ZJ0EXuc' //'126V5jnOSrC-pMK5nKOUQPELvlmpGzxFIpfWKvX6Odwo'
-
-    configId = configId || testId
-    const edgeDefaultsId = configId
-    const nodeDefaultsId = configId
-    const verticesId = configId
-    const edgesId = configId
-    const pickId = configId
-    const transformersId = configId
-
-    // specific to this run
-    const { gmlTemplate } = as
-    if (!gmlTemplate) throw `must run script/setup first`
-
-    const ss = SpreadsheetApp.openById(configId)
-    if (!ss) throw 'cant find an active or test ${testId} config spreadsheet'
-
-    console.log(
-      'setting up project version',
-      as.projectVersion,
-      'configuration',
-      as.selectedConfiguration,
-      'stub version',
-      as.stubVersion
-    )
-
-    // the source data will typically be the form spreadsheet and not included in this sheet
-    // (although it could be)
-    // so that is specified as a parameter in the config sheet
-    // and not here in code
-    as.configurations = {
-      alpha: {
-        edgeDefault: 'directed',
-        edgeWeightDefault: 1,
-        name: 'alpha',
-        template: gmlTemplate,
-
-        // hash parameters
-        hashConfigurations: {
-          flubber: {
-            type: 'flubber',
-            params: {
-              numberOfWords: 2,
-              sep: '-',
-              size: 6
-            }
-          },
-          "flubber-3-4": {
-            type: 'flubber',
-            params: {
-              numberOfWords: 3,
-              sep: '-',
-              size: 4
-            }
-          }
-        },
-        pickPreFiddler: {
-          id: pickId,
-          sheetName: 'pick'
-        },
-
-        // the source of the edge options
-        edgeDefaultsPreFiddler: {
-          id: edgeDefaultsId,
-          sheetName: 'edge-defaults'
-        },
-
-        // the source of the vertex options
-        nodeDefaultsPreFiddler: {
-          id: nodeDefaultsId,
-          sheetName: 'node-defaults',
-        },
-
-        // where to write the vertices to
-        verticesPreFiddler: {
-          id: verticesId,
-          sheetName: 'vertices',
-          createIfMissing: true,
-          respectFilter: false,
-          respectHiddenRows: false
-        },
-
-        // where to write the edges to
-        edgesPreFiddler: {
-          id: edgesId,
-          sheetName: 'edges',
-          createIfMissing: true,
-          respectFilter: false,
-          respectHiddenRows: false
-        },
-
-        // this configration ss
-        configurationPreFiddler: {
-          id: configId,
-          sheetName: 'configuration'
-        },
-
-        transformersPreFiddler: {
-          id: transformersId,
-          sheetName: 'transformers'
-        }
-
-      }
-    }
+  get active() {
+    return SpreadsheetApp.getActiveSpreadsheet()
   },
 
+  //---- this initializes the configuration from a template
+  initConfigurations(configId) {
+    return Exports.Helpers.initConfigurations(configId)
+  },
 
+  //---prettification 
   get minColWidth() {
     return 100
   },
@@ -393,16 +270,7 @@ const AppStore = {
   },
 
   makeHeadFormat(color) {
-    const u = Exports.Utils
-    const backgrounds = color;
-    // this will pick an appropriate font color based on the illumination of the backgrund color
-    const fontColors = u.getContrast(backgrounds)
-    return {
-      wraps: false,
-      backgrounds,
-      fontColors,
-      fontWeights: "bold"
-    }
+    return Exports.Helpers.makeHeadFormat(color)
   },
 
   makeStale() {
@@ -439,7 +307,7 @@ const AppStore = {
   get configuration() {
     const as = this
     const { selectedConfiguration, configurations } = as
-    return configurations[selectedConfiguration];
+    return configurations && configurations[selectedConfiguration];
   },
 
   get gmlTemplate() {
@@ -454,8 +322,56 @@ const AppStore = {
     return this.anyFiddler('configurationPreFiddler')
   },
 
+  writeLog(...args) {
+    const logFiddler = this.logFiddler
+    if (logFiddler) {
+      const sheet = logFiddler.getSheet()
+      const c = this.memory.get('configurationPreFiddler')
+      const mess = [
+        c && c.getSheet().getName() || 'config',
+        new Date(),
+        ...args
+      ]
+      sheet.appendRow(mess)
+      console.log('writelog', mess)
+    } else {
+      console.log(...args)
+    }
+    return logFiddler
+  },
+
+  get logFiddler() {
+    const as = this
+    const hs = Exports.Helpers
+    const key = 'logPreFiddler'
+    const { configuration } = as
+    if (!configuration || !configuration[key] || !configuration[key].enableLogging) return null
+
+    // logging is turned on - if we've already opened it we'll have a handle already
+    let f = as.memory.get(key)
+
+    // first time round this will happen
+    if (!f) {
+      f = this.anyFiddler(key)
+      if (f) {
+        hs.clearTargetSheet({
+          sheetName: f.getSheet().getName(),
+          id: f.getSheet().getParent().getId()
+        })
+        console.log(`...logging is enabled - see sheet ${f.getSheet().getName()}`)
+      }
+
+    }
+
+    return f
+  },
+
   get edgesFiddler() {
     return this.anyFiddler('edgesPreFiddler')
+  },
+
+  get hashNamesFiddler() {
+    return this.anyFiddler('hashNamesPreFiddler')
   },
 
   get transformersFiddler() {
@@ -478,164 +394,64 @@ const AppStore = {
     return this.anyFiddler('pickPreFiddler')
   },
 
-  // change the sheet name to a different configuration
-  patchConfiguration() {
+  get testFiddler() {
     const as = this
-    const prop = 'use-configuration'
-    const respectProp = "respect-filter"
-    const respectHiddenRowsProp = "respect-hidden-rows"
-    const { pickFiddler, configuration } = as
-    const { verticesPreFiddler, edgesPreFiddler, configurationPreFiddler } = configuration
-    const ps = pickFiddler.getSheet().getName()
-    pickFiddler.filterRows(row => row[prop])
-    const data = pickFiddler.getData()
-    if (data.length !== 1) throw `missing or ambiguous configuration sheet pick in ${ps}`
-    const [d] = data
-    if (!Reflect.has(d, respectProp)) throw `missing or ambiguous respect filter pick in ${ps}`
-    if (!Reflect.has(d, respectHiddenRowsProp)) throw `missing or ambiguous respect-hidden-ows filter pick in ${ps}`
-    configurationPreFiddler.sheetName = d[prop]
-    verticesPreFiddler.respectFilter = d[respectProp]
-    edgesPreFiddler.respectFilter = d[respectProp]
-    verticesPreFiddler.respectHiddenRows = d[respectHiddenRowsProp]
-    edgesPreFiddler.respectHiddenRows = d[respectHiddenRowsProp]
+    return as.externalFiddler(as.testId)
+  },
+
+  // change the sheet name to a different configuration
+  patchConfiguration(fromMeta = false) {
+    // check the stub is compatible with this library
+    this.isBroken()
+
+    return Exports.Helpers.patchConfiguration(fromMeta)
   },
 
   anyFiddler(name) {
     const as = this
     const { configuration } = as
-    return as.externalFiddler(configuration[name])
+    const f = configuration && as.externalFiddler(configuration[name])
+    this.memory.set(name, f)
+    return f
   },
 
-  externalFiddler(config) {
-    console.log('external fiddler', config)
-    return Exports.newPreFiddler(config)
+  externalFiddler(...args) {
+    const as = this
+    as.writeLog(`..attempting to open ${args && JSON.stringify(args)}`)
+    return Exports.newPreFiddler(...args)
   },
 
   //----end of getting and setting values in store------------------
 
-  //----direct sheet manip-------------------------------------------
-  // get rid of all formats/data/vaildations so we dont have to both reading it all in just to ignore
-  clearTargetSheet({ id, sheetName }) {
-    const sheet = SpreadsheetApp.openById(id).getSheetByName(sheetName)
-
-    // possible it doesnt exist yet if first time run on a clean sheet
-    if (sheet) {
-      sheet.getRange(
-        1,
-        1,
-        sheet.getMaxRows(),
-        sheet.getMaxColumns()
-      )
-        .clearDataValidations()
-        .clear()
-    }
-  },
-
-  // autosize, but with min widths
-  setMinWidths(sheet, minColWidth) {
-
-    // first autosize the columns
-    const range = sheet.getDataRange()
-    const columns = range.getNumColumns()
-    sheet.autoResizeColumns(1, columns)
-
-    // now ensure the widths are enough
-    const getWidth = (_, i) => sheet.getColumnWidth(i + 1)
-
-    return Array.from({ length: columns }, getWidth).map((width, i) => {
-      if (width < minColWidth) {
-        sheet.setColumnWidth(i + 1, minColWidth)
-        return minColWidth
-      }
-      return width
-    })
-  },
-
-  // apply basic edge settings formats by copying the first one over
-  applyEdgeFormatSettings(edgesFiddler, edgeDefaultsFiddler) {
-
-    // this is a bit different to the vertex version, as the values are already populated
-    // we only want the formats
-    const as = this
-
-    // this is the shape of the source formats
-    const nColumns = edgeDefaultsFiddler.getNumColumns() - 1
-    const nRange = edgeDefaultsFiddler.getRange().offset(0, 1, 1, nColumns)
-
-
-    // so this is the full range - it already includes the settings data, so we need to subtract that used by the settings
-    const vRange = edgesFiddler.getRange()
-    const vColumns = edgesFiddler.getNumColumns() - nColumns
-    const vRows = edgesFiddler.getNumRows()
-
-
-    // the headers
-    nRange.copyTo(vRange.offset(0, vColumns, 1, nColumns))
-
-    // the first row pasted all over- actuall this seems to copy the values only, so important to postpone the dump values till later
-    nRange.offset(1, 0, 1, nColumns).copyTo(vRange.offset(1, vColumns, vRows, nColumns), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION)
-
-  },
-
-  //-- now deal with the node settings copy over
-  applyNodeSettings(values, fiddler) {
-    const as = this
-    const { nodeDefaultsFiddler } = as
-    const vsIndex = as.getNodeSettingsIndex(values, nodeDefaultsFiddler)
-    const vRange = fiddler.getRange()
-    const vColumns = fiddler.getNumColumns()
-    const vRows = fiddler.getNumRows()
-
-    // drop the name column
-    const nColumns = nodeDefaultsFiddler.getNumColumns() - 1
-    const nRange = nodeDefaultsFiddler.getRange().offset(0, 1, 1, nColumns)
-
-    // the headers, then data
-    nRange.copyTo(vRange.offset(0, vColumns, 1, nColumns))
-    nRange.offset(vsIndex + 1, 0, 1, nColumns).copyTo(vRange.offset(1, vColumns, vRows, nColumns))
-
-    // auto resize the colummns
-    as.setMinWidths(fiddler.getSheet(), as.minColWidth)
-
-  },
-
-  //----end of direct sheet manip
 
   //----local app store utilities----------------------------------
-  getHasher(id) {
-    const as = this
-    const u = Exports.Utils
-    const { hashConfigurations } = as.configuration
-    const h = hashConfigurations[id]
-    if (!h) return null
-    if (h.type !== 'flubber') throw `only support flubber hashing`
-    return (text) => u.flubber({ ...h.params, text })
-  },
-
-  snakeToCamel(snake) {
-    return snake.toLowerCase()
-      .replace(/([-_][a-z])/g, group =>
-        group
-          .toUpperCase()
-          .replace('-', '')
-          .replace('_', ''))
-  },
 
   // apply hashing and retention
   applyHashing(value, item) {
-    const as = this
-    const hasher = item.vertexRedact && as.getHasher(item.vertexRedact)
-    if (hasher) value = hasher(value)
-    return value
+    return Exports.Helpers.applyHashing(value, item)
   },
 
+  // get the first names into memory of required
+  getHashNames({ key, columnName }) {
+
+    if (!this.memory.has(key)) {
+      const t = this.hashNamesFiddler
+      if (t.getHeaders().indexOf(columnName) === -1) {
+        Exports.Helpers.logThrow(`Couldnt find hash names column ${columnName} to use for redaction`)
+      }
+      const pop = t.getUniqueValues(columnName)
+      this.memory.set(key, pop)
+    }
+    return this.memory.get(key)
+  },
 
   toast(message, title = "progress report", timeout = -1) {
-    const ss = SpreadsheetApp.getActiveSpreadsheet()
+    const as = this
+    const ss = as.active
     if (ss) {
       ss.toast(message, title, timeout);
     }
-    console.log(title, message)
+    as.writeLog(title, message)
   },
 
   getVersionToastie() {
@@ -650,86 +466,6 @@ const AppStore = {
   //----end of local app store utilities----------------------------------
 
   //----configuration resolution-----------------------------------------
-  // overall processig of validation of config types
-  resolveMusts(musts, fiddler) {
-    const as = this
-    const resolved = Reflect.ownKeys(musts)
-      .reduce((p, c) => {
-        p[c] = as.resolveMust(musts[c], fiddler)
-        return p
-      }, {})
-
-    const missing = Reflect.ownKeys(resolved).reduce((p, c) => {
-      return p.concat(resolved[c].missing)
-    }, [])
-
-    if (missing.length)
-      throw `missing headers in sheet - ${fiddler.getSheet().getName()} - ${Array.from(new Set(missing)).join(',')}`
-
-    // check everything required is present
-    Reflect.ownKeys(resolved).forEach(k => as.validateAllThere(resolved[k]))
-    return resolved
-  },
-
-  // general solver for picking up params
-  resolveMust(must, fiddler) {
-    const as = this
-    const headerSet = new Set(fiddler.getHeaders())
-    const missing = must.musts.filter(f => !headerSet.has(f))
-    const data = fiddler.getData()
-
-    return {
-      missing,
-      must,
-      values: data.map(d => {
-        return must.musts.reduce((p, c) => {
-          p[as.snakeToCamel(c)] = d[c]
-          return p
-        }, {})
-      })
-        .filter(d =>
-          Reflect.ownKeys(d)
-            .filter(k => !must.optional.includes(k))
-            .some(k => d[k]))
-        .filter(d => !must.disable || !d[must.disable])
-        .map(d => must.alias ? { ...d, alias: d[must.alias] } : d)
-    }
-  },
-
-  // validate transformers tab and compile
-  compileTransformers(transformersFiddler) {
-    const as = this
-    const u = Exports.Utils
-
-    // check all necessary config colummns
-    const musts = {
-      transformers: {
-        musts: ["name", "type", "invalid-as-null", "key-value-pairs"],
-        optional: ["invalidAsNull"]
-      }
-    }
-    const resolved = as.resolveMusts(musts, transformersFiddler)
-
-    // now we need to validate the content of the transformers - we'll do the compilation right here
-    resolved.transformers.values.forEach(v => {
-      const { name, type, keyValuePairs: kv } = v
-      if (type !== 'lookup') throw `Only lookup type supported for transformers ${name}`
-      if (!u.isString(kv)) throw `Transformer ${name} key-value-pairs is not a string`
-      const tv = kv.split(",")
-      if (!tv.length || tv.length % 2) throw `Transformer ${name} key-value-pairs must be an even length (each key must have a value)`
-      v.transformer = u.chunker(tv, 2)
-        .reduce((p, [key, value]) => {
-          key = key.trim()
-          value = value.trim()
-          if (p[key]) throw `duplicate key ${key} in transformer ${name}`
-          // special treatment of null
-          p[key] = value === "null" ? null : value
-          return p
-        }, {})
-    })
-    return resolved
-  },
-
   prepareResolve(configurationFiddler) {
     const as = this
 
@@ -737,7 +473,7 @@ const AppStore = {
     const musts = {
       question: {
         musts: ["question-alias", "question-data-source", "question-text"],
-        optional: []
+        optional: ["questionDataSource"]
       },
       data: {
         musts: ["data-id", "data-sheet", "data-alias", "data-disable"],
@@ -787,9 +523,10 @@ const AppStore = {
           "edge-weight",
           "edge-undirected",
           "edge-transformer",
-          "edge-drop-null"
+          "edge-drop-null",
+          "edge-ghosts"
         ],
-        optional: ["edgeLoopAllow", "edgeDisable", "edgeWeight", "edgeUndirected", "edgeTransformer", "edgeLabel", "edgeDropNull"],
+        optional: ["edgeLoopAllow", "edgeDisable", "edgeWeight", "edgeUndirected", "edgeTransformer", "edgeLabel", "edgeDropNull", "edgeGhosts"],
         disable: "edgeDisable",
         alias: "edge"
       }
@@ -798,33 +535,23 @@ const AppStore = {
     return as.resolveMusts(musts, configurationFiddler)
   },
 
+  // overall processig of validation of config types
+  resolveMusts(musts, fiddler) {
+    return Exports.Helpers.resolveMusts(musts, fiddler)
+  },
+
+  // general solver for picking up params
+  resolveMust(must, fiddler) {
+    return Exports.Helpers.resolveMust(must, fiddler)
+  },
+
+  // validate transformers tab and compile
+  compileTransformers(transformersFiddler) {
+    return Exports.Helpers.compileTransformers(transformersFiddler)
+  },
+
   validateAllThere(item) {
-    const { must, values } = item
-    const { optional } = must
-
-    const broken = values.reduce((p, c) => {
-      Reflect.ownKeys(c).forEach(k => {
-        if (!c[k] && !optional.includes(k)) p.push(k)
-      })
-      return p
-    }, [])
-
-    if (broken.length) throw `some missing required values = ${Array.from(new Set(broken)).join(',')}`
-    return item
-  },
-
-  getNodeSettingsIndex(values, fiddler) {
-    const as = this
-    const { nodeSettings } = values[0] || {}
-    return as.getSettingsIndex(fiddler, nodeSettings, "node-settiings")
-  },
-
-  getSettingsIndex(fiddler, propValue, name) {
-    //--- get the vSettings
-    if (!propValue) throw `${name} value not provided`
-    const vsIndex = fiddler.getData().findIndex(f => f.name === propValue)
-    if (vsIndex === -1) throw `${name} ${propValue} not found in ${fiddler.getSheet().getName()} tab`
-    return vsIndex
+    return Exports.Helpers.validateAllThere(item)
   },
 
 
@@ -835,15 +562,17 @@ const AppStore = {
 
   resolve() {
     const as = this
+    const hs = Exports.Helpers
     const u = Exports.Utils
 
     const { configuration, configurationFiddler, transformersFiddler, edgeDefaultsFiddler } = as
     const { verticesPreFiddler, edgesPreFiddler, edgeWeightDefault } = configuration
+
     //--- get the edge settings we'll need this later so just do it the once here.
     const edgeSettingsData = edgeDefaultsFiddler.getData()
 
     if (!isFinite(edgeWeightDefault))
-      throw `invalid edgeweightdefault ${edgeWeightDefault}`
+      Exports.Helpers.logThrow(`invalid edgeweightdefault ${edgeWeightDefault}`)
 
     as.toast(
       `${as.getConfigToastie(configurationFiddler)}            ${as.getVersionToastie()}`,
@@ -860,16 +589,16 @@ const AppStore = {
     //--- organize entities
     const vertex = as.organize(resolved.vertex.values, 'vertex', (item, entity) => {
       if (item.vertexType !== 'question')
-        throw `only "question" vertex-type supported for ${entity}`
+        hs.logThrow(`only "question" vertex-type supported for ${entity}`)
     })
     const edge = as.organize(resolved.edge.values, 'edge', (item, entity) => {
-      const validTypes = ["grid", "multi-grid"]
+      const validTypes = ["grid", "multi-grid", "virtual-grid"]
       if (!validTypes.includes(item.edgeType))
-        throw `only ${validtypes.join(",")} edge-type supported for ${entity}`
+        hs.logThrow(`only ${validTypes.join(",")} edge-type supported for ${entity}`)
     })
       // check that essentialas are there before going any further
       ;["id-alias", "Label"].forEach(f => {
-        if (!vertex.get(f)) throw `Mandatory vertex ${f} missing`
+        if (!vertex.get(f)) hs.logThrow(`Mandatory vertex ${f} missing`)
       })
 
     //---- organize questions an associate them the given alias 
@@ -877,66 +606,84 @@ const AppStore = {
       .question
       .values
       .forEach(question => {
-        const ds = dataMap.get(question.questionDataSource)
-        if (ds) {
-          const av = vertex.get(question.questionAlias)
-          const ae = edge.get(question.questionAlias)
-          const item = av || ae
-          if (item) {
-            if (av && ae) throw `vertex ${question.questionAlias} can't be an edge too`
-            if (!ds.items) ds.items = []
-            const type = ae ? 'edge' : 'vertex'
-            if (!item.dataSources) item.dataSources = new Map()
-            if (item.dataSources.get(ds.alias))
-              throw `Duplicate data source for alias ${type} ${item.alias} - ${ds.alias}`
-            const ob = {
-              item,
-              question,
-              type
+        // a blank data source means the question applies to alldata sources
+        const dKeys = u.isSheetsNU(question.questionDataSource) ?
+          Array.from(dataMap.keys()) : [question.questionDataSource]
+
+        dKeys.forEach(k => {
+          const ds = dataMap.get(k)
+          if (ds) {
+            const av = vertex.get(question.questionAlias)
+            const ae = edge.get(question.questionAlias)
+            const item = av || ae
+            if (item) {
+              if (av && ae) hs.logThrow(`vertex ${question.questionAlias} can't be an edge too`)
+              if (!ds.items) ds.items = []
+
+              const type = ae ? 'edge' : 'vertex'
+              if (!item.dataSources) item.dataSources = new Map()
+              if (item.dataSources.get(ds.alias))
+                hs.logThrow(`Duplicate data source for alias ${type} ${item.alias} - ${ds.alias}`)
+              const ob = {
+                item,
+                question,
+                type
+              }
+
+              // this is how to get an item definition for a given data source
+              item.dataSources.set(ds.alias, ob)
+              ds.items.push(ob)
             }
-
-            // this is how to get an item definition for a given data source
-            item.dataSources.set(ds.alias, ob)
-
-            ds.items.push(ob)
+          } else {
+            hs.logThrow(`Cant find datasource ${question.questionDataSource} for ${question.questionText}`)
           }
-        } else {
-          throw `Cant find datasource ${question.questionDataSource} for ${question.questionText}`
-        }
+        })
       })
+
 
     //--- assign the id questions to avoid repeating later
     as.addIdQuestions(dataMap)
 
+    const emess = 'are you sure the question text is accurate for each data set?'
+    // pick up edge values from each data set
+    as.toast(`...working on edges`)
+    const edgeDataModel = as.makeEdgeDataModel({
+      edge, transformerMap, dataMap, vertex, edgeWeightDefault, edgeSettingsData
+    })
+    if (!edgeDataModel.length) hs.logThrow(`no edges were found - ${emess}`)
+
     // pick up vertex values from each data set
     as.toast(`...working on vertices`)
     const vertexDataMap = as.makeVertexDataMap({ vertex, dataMap })
-    if (!vertexDataMap.size) throw `no vertice data was found - are you sure the question text is accurate for each data set?`
+    if (!vertexDataMap.size) hs.logThrow(`no vertice data was found -  - ${emess}`)
 
-    // and edge values
-    as.toast(`...working on edges`)
-    const edgeDataModel = as.makeEdgeDataModel({ edge, transformerMap, dataMap, vertex, edgeWeightDefault, edgeSettingsData })
-    if (!edgeDataModel.length) throw `no edges were found - are you sure the question text is accurate for each data set?`
-
-    // fix up the edge settings
-
-    //--- put the data without the settings
-    // clear it first to avoid wasting time reading any exosting values
+    // set the meta data we'll write to the receiving sheet
     as.toast(`...writing vertices to sheet ${verticesPreFiddler.sheetName}`)
-    as.clearTargetSheet(verticesPreFiddler)
+    meta = {
+      createdAt: new Date().getTime(),
+      configuration: {
+        sheetId: configurationFiddler.getSheet().getSheetId(),
+        sheetName: configurationFiddler.getSheet().getName(),
+        ssid: configurationFiddler.getSheet().getParent().getId()
+      }
+    }
+    hs.clearTargetSheet(verticesPreFiddler)
     const { verticesFiddler, headFormat } = as
+
     // write the data and format the headings
     verticesFiddler.setData(Array.from(vertexDataMap.values()))
       .setHeaderFormat(headFormat)
       .dumpValues()
 
     //-- now deal with the node settings copy over
-    as.applyNodeSettings(resolved.node.values, verticesFiddler)
+    hs.applyNodeSettings(resolved.node.values, verticesFiddler)
 
+    // push the meta data
+    Exports.DeveloperData.setDob(verticesFiddler.getSheet(), as.dobKey, meta)
 
-    // clear it first to avoid wasting time reading any exosting values
+    // repeat for edges
     as.toast(`...writing edges to sheet ${edgesPreFiddler.sheetName}`)
-    as.clearTargetSheet(edgesPreFiddler)
+    hs.clearTargetSheet(edgesPreFiddler)
     const { edgesFiddler } = as
 
     // we postponed the addition of the settings to ensure that all the data fields came first
@@ -958,11 +705,15 @@ const AppStore = {
     edgesFiddler.setData(edgeData)
       .setHeaderFormat(headFormat)
 
-    as.applyEdgeFormatSettings(edgesFiddler, edgeDefaultsFiddler)
+    hs.applyEdgeFormatSettings(edgesFiddler, edgeDefaultsFiddler)
 
     // important to postpone dump values till after applying edge format settings
     edgesFiddler.dumpValues()
-    as.setMinWidths(edgesFiddler.getSheet(), as.minColWidth)
+    hs.setMinWidths(edgesFiddler.getSheet(), as.minColWidth)
+
+    // write developer data for edges
+    Exports.DeveloperData.setDob(edgesFiddler.getSheet(), as.dobKey, meta)
+
 
     as.toast(`...${dataMap.size} datasets produced ${vertexDataMap.size} vertices and ${edgeData.length} edges`, "Data Ingest complete", 3)
   },
@@ -981,7 +732,7 @@ const AppStore = {
       // check this prop exists in the transformer
       if (u.isNU(prop) || !Reflect.has(t, prop)) {
         if (!t.invalidAsNull)
-          throw `unknown ${transformer.name} value ${prop} for ${source} (treat empty as null by appending ,,null to transformer list)`
+          Exports.Helpers.logThrow(`unknown ${transformer.name} value ${prop} for ${source} (treat empty as null by appending ,,null to transformer list)`)
         return {
           value,
           transformed: null
@@ -1000,17 +751,193 @@ const AppStore = {
 
   },
 
-  //-- now make the edge connections
-  makeEdgeDataModel({ edge, transformerMap, dataMap, vertex, edgeWeightDefault, edgeSettingsData }) {
-    const as = this
-    const u = Exports.Utils
+  // get the transformer for a given edge
+  getEdgeTransformer({ edge, transformerMap }) {
+    const { alias, edgeTransformer } = edge
+    const transformer = transformerMap.get(edgeTransformer)
+    if (edgeTransformer && !transformer)
+      Exports.Helpers.logThrow(`Couldnt find transformer ${edgeTransformer} for ${alias}`)
+    return transformer
+  },
 
-    const ewProp = "Edge Weight"
-    const esMap = edgeSettingsData.reduce((p, c) => {
+  // get edge setting an validate
+  getEdgeSettings({ edgeSettings }) {
+    const et = edgeSettings && edgeSettings.toString()
+    return et && /^\$/.test(et) ? {
+      edgeSettings: et.substring(1),
+      dynamic: true
+    } : {
+      edgeSettings: et
+    }
+  },
+
+  // get the edge settings for easier access
+  getEsMap({ edgeSettingsData }) {
+    return edgeSettingsData.reduce((p, c) => {
       p.set(c.name.toString(), [c].map(({ name, ...rest }) => ({ ...rest }))[0])
       return p
     }, new Map())
+  },
 
+
+  // say we have questions like i like mary, i like john, i like fred
+  // and joan as said I like mary, but mary didnt take the survey, we wouldnt be able to
+  // visualize an edge from joan to mary, so we have to create a ghost entry for mary 
+  addGhostVertices({ dmap, edge, question, vertex }) {
+
+    const as = this
+    const hs = Exports.Helpers
+    const u = Exports.Utils
+    // they'll go here
+    const adds = []
+    const { edgeSource, edgeTarget, edgeGhosts } = edge
+    const { data, headerSet, alias } = dmap
+
+    // pick up the column names for the required items
+    // mostly source and target would be the same 
+    // in our example 'name' to produce source and target values of mary, john etc
+    const vsd = as.getVertexItem(vertex, edgeSource, edge.alias, alias)
+    const vtd = as.getVertexItem(vertex, edgeTarget, edge.alias, alias)
+    const vid = as.getVertexItem(vertex, 'id-alias', edge.alias, alias)
+    const vld = as.getVertexItem(vertex, 'Label', edge.alias, alias)
+    const { questionText } = question
+
+    // the sources available in the data set
+    // source and target are generally the same
+    // TODO work up and test a scenario where they might be different
+    const sources = new Set(
+      data.map(f => f[vsd.question.questionText]).concat(
+        data.map(f => f[vtd.question.questionText])
+      ))
+
+    // use this to create a blank new object
+    const templateOb = Array.from(headerSet.keys()).reduce((p, c) => {
+      p[c] = ''
+      return p
+    }, { __dataType: 'ghost' })
+
+    // E1
+    // there isnt a placeholder for the target in the question text
+    const rx = new RegExp(`\\[${vtd.item.alias}\\]`)
+    if (!questionText.match(vtd.item.alias)) {
+      hs.logThrow(`Expected to find placeholder [${vtd.item.alias}] in ${questionText}`)
+    }
+
+    // E2
+    // here's where we'd check if the respondent joan exists as a target
+    // at this point it doesn't matter if they don't
+    // TODO other scenarios might matter so I'll leave it on for now
+    data.forEach((d, i) => {
+      const t = d[vsd.question.questionText]
+      const q = questionText.replace(rx, `[${t}]`)
+      if (!headerSet.has(q)) {
+        as.writeLog('warning', `...source ${t} in ds ${alias} row ${i + 1} doesn't appear in a ${questionText}`)
+      }
+      return d
+    })
+
+
+    // E3
+    // remove the [name] part
+    const qbase = questionText.replace (/\[.*\]/,"")
+    // the question may have special rx chars in it
+    const qesc = u.escapeStringforRx(qbase)
+    // append a matcher for [ghostname]
+    const qescrx = `(${qesc})\\[(.*)\\]`
+    const qrx = new RegExp (qescrx)
+
+    // find all questions that look like this one
+    const questionsLikeThis = Array.from(headerSet.keys()).filter(f => f.match(qrx))
+    questionsLikeThis.forEach(f => {
+      // pick up the ghost name
+      const ix = f.replace(qrx, "$2")
+      // if we dont already know that ghost, create and empty vertex
+      if (!sources.has(ix) && edgeGhosts) {
+        sources.add(ix)
+        const ob = {
+          ...templateOb
+        }
+        ob[vsd.question.questionText] = ix
+        ob[vid.question.questionText] = ix
+        adds.push(ob)
+      }
+    })
+
+    return adds
+
+  },
+
+  // make all the ghost vertices in advance
+  // the objective to come up with an array of template obs to be added to the each set
+  generateGhosts({ edge, dataMap, vertex }) {
+    const as = this
+    const u = Exports.Utils
+
+    // each edge in the sheet
+    // there's no return value as we'll add a prop to each dataMap item
+    for (let dmap of dataMap.values()) {
+
+      const { alias } = dmap
+      dmap.ghosts = []
+
+      for (let edgeValue of edge.values()) {
+        const { dataSources } = edgeValue
+
+        // this finds the edge definition in the current data set alias - alias will be somethinglike t1
+        const ds = dataSources.get(alias)
+        if (!ds) hs.logThrow(`Couldn't establish data source for ${edgeValue.alias} in dataset ${alias}`)
+        // find the placehoder in the grid question
+        const { question } = ds
+        if (!question)
+          hs.logThrow(`question text not found in data source ${alias} for ${vtd.item.alias}`)
+
+        // now add any missing
+        const ghosts = as.addGhostVertices({ dmap, edge: edgeValue, question, vertex })
+        ghosts.forEach(c => {
+          // merge if ids match
+          const vid = as.getVertexItem(vertex, 'id-alias', edgeValue.alias, alias)
+          const qt = vid.question.questionText
+          const match = dmap.ghosts.findIndex(f => f[qt] === c[qt])
+          // it exists so add any values that are not null
+          if (match !== -1) {
+            dmap.ghosts[match] = {
+              ...dmap.ghosts[match],
+              ...u.dropProps(c)
+            }
+          } else {
+            dmap.ghosts = dmap.ghosts.concat(c)
+          }
+        })
+
+      }
+    }
+  },
+
+  //-- now make the edge connections
+  makeEdgeDataModel({
+    edge,
+    transformerMap,
+    dataMap,
+    vertex,
+    edgeWeightDefault,
+    edgeSettingsData
+  }) {
+    const as = this
+    const u = Exports.Utils
+    const hs = Exports.Helpers
+
+    const ewProp = "Edge Weight"
+    const esMap = as.getEsMap({ edgeSettingsData })
+
+    // gety what we need to add to the datamap for ghost vertices
+    as.generateGhosts({ edge, dataMap, vertex })
+
+    // add these into the data as if they always existed
+    for (let d of dataMap.values()) {
+      d.data = d.data.concat(d.ghosts)
+    }
+
+    // an array item for each edge
     return Array.from(edge.values()).reduce((p, edge) => {
       const {
         edgeSource,
@@ -1024,38 +951,30 @@ const AppStore = {
         edgeTransformer,
         edgeDropNull,
         edgeWeight,
-        dataSources
+        dataSources,
+        edgeGhosts
       } = edge
 
 
-      if (!dataSources) throw `Missing dataSources for edge ${edge.edge} - check they are accurately named in the config and have an associated question`
-
+      if (!dataSources) hs.logThrow(`Missing dataSources for edge ${edge.edge} - check they are accurately named in the config and have an associated question`)
 
       // see if there's a transformer needed
-      const transformer = transformerMap.get(edgeTransformer)
-      if (edgeTransformer && !transformer)
-        throw `Couldnt find transformer ${edgeTransformer} for ${edge.alias}`
+      const transformer = as.getEdgeTransformer({ edge, transformerMap })
 
       // this applies to the item so we can do it now
       // this'll be the extra column applied if there's a transformer
       const transformProp = transformer && transformer.name
 
       // edgesettings could be dynamic
-      const et = edgeSettings && edgeSettings.toString()
-      const es = et && /^\$/.test(et) ? {
-        edgeSettings: et.substring(1),
-        dynamic: true
-      } : {
-        edgeSettings: et
-      }
+      const es = as.getEdgeSettings(edge)
 
       // now circle on the data sets
-      Array.from(dataMap.values()).forEach(d => {
+      for (let d of dataMap.values()) {
         const { data, headerSet, alias } = d
 
         // we have an link into each dataset for each vertex
         const ds = dataSources.get(alias)
-        if (!ds) throw `Couldn't establish data source for ${edge.alias} in dataset ${alias}`
+        if (!ds) hs.logThrow(`Couldn't establish data source for ${edge.alias} in dataset ${alias}`)
 
         // pick up the column names for the required items
         const vsd = as.getVertexItem(vertex, edgeSource, edge.alias, alias)
@@ -1065,12 +984,15 @@ const AppStore = {
         // find the placehoder in the grid question
         const { question } = ds
         if (!question)
-          throw `question text not found in data source ${alias} for ${vtd.item.alias}`
+          hs.logThrow(`question text not found in data source ${alias} for ${vtd.item.alias}`)
+
         const rx = new RegExp(`\\[${vtd.item.alias}\\]`)
-        if (!rx.test(question.questionText))
-          throw (`couldnt find placeholder [${vtd.item.alias}] in ${question.questionText}`)
+        if (!rx.test(question.questionText) && edgeType !== 'virtual-grid')
+          hs.logThrow(`couldnt find placeholder [${vtd.item.alias}] in ${question.questionText}`)
 
         // from vertex to vertex mappings
+
+
         data.forEach((sourceRow) => {
           const source = as.applyHashing(sourceRow[vsd.question.questionText], vsd.item)
           const vertex1 = as.applyHashing(sourceRow[vxd.question.questionText], vxd.item)
@@ -1079,16 +1001,20 @@ const AppStore = {
           data.forEach((targetRow) => {
 
             // this is to extract the question that identifies the target
+            // so it'll be something like how to like [food]
+            // in this case the target is 'food'
             const target = as.applyHashing(targetRow[vtd.question.questionText], vtd.item)
 
             // check to avoid self loop
-            if (source !== target || edgeLoopAllow) {
+            if (!(u.isSheetsNU(source) || u.isSheetsNU(target)) && (source !== target || edgeLoopAllow)) {
 
               // now we need to figure out the grid matching 
               // the question text should contain something like ... [name]
+
               const targetQuestion = question.questionText.replace(rx, `[${target}]`)
 
-              // this test matched the whole thing ie. "the question text for [john doe]"
+              // in the case of a virtual grid we need to loop through every possible answer
+              // TODO
               if (headerSet.has(targetQuestion)) {
 
                 // the id of the target vertex
@@ -1096,20 +1022,47 @@ const AppStore = {
                 // all data comes from the source row
                 const vertex2 = as.applyHashing(targetRow[vxd.question.questionText], vxd.item)
 
-
                 // note this is unintuitive but correct - 
                 // sourceRow NOT targetRow 
                 // because the targetrow is just to find the details of the target
                 // the data is always from the source row 
                 const sourceValue = sourceRow[targetQuestion]
 
-                // multi-grid values could be comma separated
-                // and these need to be expanded into separate edges
-                const values = (edgeType === "multi-grid" ?
-                  sourceValue.split(",") : [sourceValue])
-                  .map(f => f.trim())
-                  .filter(f => f !== '' && !u.isNU(f))
-                  .map(f => as.execTransformer({ transformer, value: f, source }))
+                const transformEdgeValues = ({ edgeType, sourceValue, transformer, source }) => {
+                  const hs = Exports.Helpers
+                  const as = Exports.AppStore
+
+                  const transform = (({ value }) =>
+                    as.execTransformer({ transformer, value, source }))
+
+                  const clean = (items) => items.map(f => f && f.trim())
+                    .filter(f => !u.isSheetsNU(f))
+
+                  // multi-grid values could be comma separated
+                  // and these need to be expanded into separate edges
+                  switch (edgeType) {
+                    case "multi-grid":
+                      return clean(sourceValue.split(",")).map(value => transform({ value }))
+
+                    case "grid":
+                      return clean([sourceValue]).map(value => transform({ value }))
+
+                    case "virtual-grid":
+                      // we'll have a target like 'twitter'
+                      // and the source will be rapidly changing
+                      // so we need an edge for each pair
+
+                      console.log('the target/source/question is', target, source, question)
+                      return []
+                      break
+
+                    default:
+                      hs.logThrow(`Unknown edge-type ${edgeType}`)
+                  }
+                }
+
+                const values = transformEdgeValues({ edgeType, sourceValue, transformer, source })
+
 
                 values.forEach(({ value, transformed }) => {
 
@@ -1142,11 +1095,11 @@ const AppStore = {
 
                     if (edgeWeight) {
                       if (!Reflect.has(model, edgeWeight))
-                        throw `edge-weight ${edgeWeight} missing for ${edge.alias}`
+                        Exports.Helpers.logThrow(`edge-weight ${edgeWeight} missing for ${edge.alias} - is your transformer  ${edgeTransformer} wrong?`)
 
                       const w = model[edgeWeight]
                       if (!isFinite(w))
-                        throw `edge-weight ${w} is not a valid number for ${source} in ${edge.alias}`
+                        Exports.Helpers.logThrow(`edge-weight ${w} is not a valid number for ${source} in ${edge.alias}`)
 
                       // convert it to a number and use as a weight
                       model[ewProp] = parseFloat(w)
@@ -1159,7 +1112,7 @@ const AppStore = {
                     // edge label will have data set name appended if there's multiple data sets
                     if (edgeLabel) {
                       const label = edgeLabel === "edge" ? edge.alias : model[edgeLabel]
-                      if (!label) throw `Cant make ${edgeLabel} for ${vertex1}:${vertex2}`
+                      if (!label) Exports.Helpers.logThrow(`Cant make ${edgeLabel} for ${vertex1}:${vertex2}`)
                       model.Label = dataMap.size > 1 ? label + '-' + alias : label
                     }
                     let esSpread = {}
@@ -1171,9 +1124,9 @@ const AppStore = {
 
                       // now get that from known edgesettings
                       esSpread = esMap.get(spreadName)
-                      if (!esSpread) throw `couldn't find edge-settings ${spreadName} for ${edge.alias}`
+                      if (!esSpread) Exports.Helpers.logThrow(`couldn't find edge-settings ${spreadName} for ${edge.alias}`)
                       if (Reflect.has(esSpread, edge.alias))
-                        throw `${edge.alias} can't exist in both edge defaults and as an edge value - remove or set to empty in edge-defaults`
+                        Exports.Helpers.logThrow(`${edge.alias} can't exist in both edge defaults and as an edge value - remove or set to empty in edge-defaults`)
                     }
 
                     // we can drop null transforms
@@ -1184,15 +1137,17 @@ const AppStore = {
 
 
               } else {
+
                 // TODO decide what action to take if missing - for now I'm just ignoring
-                // throw `${targetQuestion} is missing from dataset ${alias}`
+                as.writeLog(`For ${edge.alias}:${targetQuestion} is missing from dataset ${alias}`)
               }
 
             }
           })
 
         })
-      })
+
+      }
       return p
     }, [])
   },
@@ -1200,37 +1155,52 @@ const AppStore = {
   // get vertex values from dataset
   makeVertexDataMap({ vertex, dataMap }) {
     const as = this
+    const hs = Exports.Helpers
     return Array.from(vertex.values()).reduce((p, vertex) => {
+
       const { dataSources, vertexAddSource } = vertex
+      if (!dataSources) {
+        console.log('failed to find data sources for ', vertex)
+        hs.logThrow(`Failed to find datasource definition for ${vertex && vertex.alias}`)
+      }
 
       // for each data set, find the value for the current vertex
       Array.from(dataMap.values()).forEach(d => {
-        const { data, headerSet, alias, idQuestionText, idItem } = d
 
+        const { data, headerSet, alias, idQuestionText, idItem } = d
         // we have an link into each dataset for each vertex
         const ds = dataSources.get(alias)
-        if (!ds) throw `Couldn't establish data source for ${vertex.alias} in dataset ${alias}`
+        if (!ds) hs.logThrow(`Couldn't establish data source for ${vertex.alias} in dataset ${alias}`)
 
         // this is how this particular vertex is known in the selected data set
         const { question } = ds
         if (!question)
-          throw `question text not found in data source ${alias} for ${idItem.alias}`
+          hs.logThrow(`question text not found in data source ${alias} for ${idItem.alias}`)
 
         // this is the rows of data from each of the data sources
         data.forEach((inputRow, i) => {
           // first get the alias value for this row
+
           const idAliasValue = as.applyHashing(inputRow[idQuestionText], idItem)
-          if (!idAliasValue) throw `Missing id-alias value in row ${i} of source ${alias}`
+          if (!idAliasValue) hs.logThrow(`Missing id-alias value in row ${i + 1} of source ${alias}`)
 
           // we're making a map using the idalias of each row in the data set
-          if (!p.get(idAliasValue)) p.set(idAliasValue, {})
+          if (!p.get(idAliasValue)) {
+            p.set(idAliasValue, {})
+          }
           const rob = p.get(idAliasValue)
 
           // this may have been checked before, but just to double check 
           // that we didnt get lost somewhere
-          if (!headerSet.has(question.questionText))
-            throw `${question.questionText} not found in data source ${alias} for ${idItem.alias}`
+          // So the problem here is that if we've declared a // question with a ...[name] as a vertex it wont find that.
+          // I think we need to not allow those kind of q's are vertices
 
+          if (!headerSet.has(question.questionText)) {
+            // but if its for a viertual edge... somethign special TODO
+            console.log('missing question.questionText - the rob was', rob, 'for', idAliasValue)
+            console.log('heres the array from header set', Array.from(headerSet.keys()))
+            hs.logThrow(`check spelling-${question.questionText} not found in data source ${alias} for ${idItem.alias} at row ${i + 1}`)
+          }
           // hash the value if required
           const value = as.applyHashing(inputRow[question.questionText], vertex)
           rob[vertex.alias] = value
@@ -1247,9 +1217,10 @@ const AppStore = {
 
   // general oragnizer
   organize(values, entity, validate) {
+    const hs = Exports.Helpers
     return values
       .reduce((p, c) => {
-        if (p.get(c.alias)) throw `duplicate ${entity} ${c.alias} found`
+        if (p.get(c.alias)) hs.logThrow(`duplicate ${entity} ${c.alias} found`)
         validate(c, entity)
         p.set(c.alias, c)
         return p
@@ -1259,15 +1230,26 @@ const AppStore = {
   // get the data maps
   getDataMap(values) {
     const as = this
+    const hs = Exports.Helpers
     return values.reduce((p, d) => {
-      if (p.get(d.alias)) throw `duplicate data-alias ${d.alias} found`
+      if (p.get(d.alias)) hs.logThrow(`duplicate data-alias ${d.alias} found`)
       try {
         as.toast(`from ${d.dataId}: ${d.dataSheet}`, "Getting Data", 4)
-        const fiddler = as.externalFiddler({
-          id: d.dataId,
-          sheetName: d.dataSheet,
-          createIfMissing: false
-        })
+        let fiddler = null
+        try {
+          fiddler = as.externalFiddler({
+            id: d.dataId,
+            sheetName: d.dataSheet,
+            createIfMissing: false
+          })
+        }
+        catch (err) {
+          hs.logThrow(
+            "Couldnt to open data sheet ${d.dataSheet}"
+          )
+        }
+
+
         p.set(d.alias, {
           fiddler,
           headers: fiddler.getHeaders(),
@@ -1277,7 +1259,7 @@ const AppStore = {
         })
       }
       catch (err) {
-        throw `couldnt open sheet ${d.dataSheet} ${err}`
+        hs.logThrow(`couldnt open sheet ${d.dataSheet} ${err}`)
       }
       return p
     }, new Map())
@@ -1287,14 +1269,15 @@ const AppStore = {
 
   addIdQuestions(dataMap) {
     const as = this
+    const hs = Exports.Helpers
     //--- find the id item for each dataset to avoid doing it loads of times later
     for (let ds of dataMap.values()) {
       const idFind = ds.items && ds.items.find(f => f.item.alias === 'id-alias')
-      if (!idFind) throw `Couldn't find id-alias in data source ${ds.alias}`
+      if (!idFind) hs.logThrow(`Couldn't find id-alias in data source ${ds.alias}`)
       const { item: idItem, question: idQuestion } = idFind
       const { questionText: idQuestionText } = idQuestion
       if (!ds.headerSet.has(idQuestionText))
-        throw `${idQuestionText} not found in data source ${ds.alias} for ${idItem.alias}`
+        hs.logThrow(`${idQuestionText} not found in data source ${ds.alias} for ${idItem.alias}`)
       ds.idQuestionText = idQuestionText
       ds.idItem = idItem
     }
@@ -1302,9 +1285,10 @@ const AppStore = {
 
   getVertexItem(vItems, name, edge, dsAlias) {
     const vSource = vItems.get(name)
-    if (!vSource) throw `Missing vertex ${name} for edge ${edge}`
+    const hs = Exports.Helpers
+    if (!vSource) hs.logThrow(`Missing vertex ${name} for edge ${edge}`)
     const vd = vSource.dataSources.get(dsAlias)
-    if (!vd) throw `Missing datasource ${dsAlias} for vertex ${name} at edge ${edge}`
+    if (!vd) hs.logThrow(`Missing datasource ${dsAlias} for vertex ${name} at edge ${edge}`)
     return vd
   },
   //----end of ingestion-----------------------------------------------------
