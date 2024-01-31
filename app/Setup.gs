@@ -9,8 +9,9 @@
     as.clearMemory();
 
     // vthis can be used to validate that setup has been run
-    as.projectVersion = 'lib.1.0.0.rc12.June.2023'
-  
+    as.projectVersion = 'lib.1.0.0.rc25.Dec.2023'
+    as.brokenBefore = 2
+    
     // these are the template settings for gml
     as.gmlTemplate = {
       keys: [
