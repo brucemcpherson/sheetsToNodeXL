@@ -13,7 +13,7 @@ const Helpers = {
       sheetName: "config-interactions"
     }
     const bruces = {
-      id: '126V5jnOSrC-pMK5nKOUQPELvlmpGzxFIpfWKvX6Odwo',
+      id: '1Gcu3EjOGx0ADn5UUw7a6Baca-lqN7roERO9GEYBVuFA',
       sheetName: 'config-sgt-bruce'
     }
     const marcs = {
@@ -26,7 +26,7 @@ const Helpers = {
       sheetName: 'config-LHL'
     }
 
-    return !as.active && work
+    return !as.active && bruces
   },
 
   getSettingsIndex(fiddler, propValue, name) {
