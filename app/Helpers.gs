@@ -26,7 +26,12 @@ const Helpers = {
       sheetName: 'config-LHL'
     }
 
-    return !as.active && bruces
+    const csp = {
+      id: "1Wu61d8rIURw0YkUU-bFRHUM6LOHluO3CZyvupmlCS3o",
+      sheetName: "csp-t1-t4-type"
+    }
+
+    return !as.active && csp
   },
 
   getSettingsIndex(fiddler, propValue, name) {
@@ -43,7 +48,7 @@ const Helpers = {
     return hs.getSettingsIndex(fiddler, nodeSettings, "node-settiings")
   },
 
-  logThrow (message) {
+  logThrow(message) {
     const as = Exports.AppStore
     as.writeLog('FAILURE', message)
     throw message
@@ -78,7 +83,7 @@ const Helpers = {
     }, [])
 
     if (missing.length)
-      this.logThrow (`missing headers in sheet - ${fiddler.getSheet().getName()} - ${Array.from(new Set(missing)).join(',')}`)
+      this.logThrow(`missing headers in sheet - ${fiddler.getSheet().getName()} - ${Array.from(new Set(missing)).join(',')}`)
 
     // check everything required is present
     Reflect.ownKeys(resolved).forEach(k => as.validateAllThere(resolved[k]))
@@ -101,15 +106,21 @@ const Helpers = {
     // now we need to validate the content of the transformers - we'll do the compilation right here
     resolved.transformers.values.forEach(v => {
       const { name, type, keyValuePairs: kv } = v
-      if (type !== 'lookup') this.logThrow (`Only lookup type supported for transformers ${name}`)
-      if (!u.isString(kv)) this.logThrow (`Transformer ${name} key-value-pairs is not a string`)
+      const validTransformers = ['lookup']
+      if (validTransformers.indexOf(type) === -1) {
+        this.logThrow(`Only ${validTransformers.join(",")} type supported for transformers ${name}`)
+      }
+      if (!u.isString(kv)) this.logThrow(`Transformer ${name} key-value-pairs is not a string`)
+
       const tv = kv.split(",")
-      if (!tv.length || tv.length % 2) this.logThrow (`Transformer ${name} key-value-pairs must be an even length (each key must have a value)`)
+      if (!tv.length || tv.length % 2) {
+        this.logThrow(`Transformer ${name} key-value-pairs must be an even length (each key must have a value)`)
+      }
       v.transformer = u.chunker(tv, 2)
         .reduce((p, [key, value]) => {
           key = key.trim()
           value = value.trim()
-          if (p[key]) this.logThrow (`duplicate key ${key} in transformer ${name}`)
+          if (p[key]) this.logThrow(`duplicate key ${key} in transformer ${name}`)
           // special treatment of null
           p[key] = value === "null" ? null : value
           return p
@@ -154,7 +165,7 @@ const Helpers = {
         .map(d => must.alias ? { ...d, alias: d[must.alias] } : d)
     }
   },
-  
+
   // apply hashing and retention
   applyHashing(value, item) {
     const hasher = item.vertexRedact && this.getHasher(item.alias, item.vertexRedact)
@@ -169,12 +180,12 @@ const Helpers = {
     const { hashConfigurations } = as.configuration
     const h = hashConfigurations[id]
     if (id && !h) {
-      this.logThrow (`no such hasher ${id}`)
+      this.logThrow(`no such hasher ${id}`)
     }
     if (!h) return null
 
     if (h.type === 'list' || h.type === 'index') return this.getHashLister(alias, h)
-    if (h.type !== 'flubber') this.logThrow (`only support flubber && list hashing ${JSON.stringify(h)}`)
+    if (h.type !== 'flubber') this.logThrow(`only support flubber && list hashing ${JSON.stringify(h)}`)
     return (text) => u.flubber({ ...h.params, text })
   },
 
@@ -191,9 +202,9 @@ const Helpers = {
     const hs = Exports.Helpers
     const size = (data && data.length) || (domain && u.isArray(domain) && Math.abs(domain[1] - domain[0]))
     if (!size) {
-      hs.logThrow (`no hash names to work with for ` + alias)
+      hs.logThrow(`no hash names to work with for ` + alias)
     }
-    if (!text) hs.logThrow (`no text provided to redact`)
+    if (!text) hs.logThrow(`no text provided to redact`)
     const base = domain && Math.min(...domain)
     // we'll check for collisions
     const collisionKey = key + '-' + 'collisions' + '-' + alias
@@ -210,7 +221,7 @@ const Helpers = {
     // now check for a collision
     const t = collisionMap.get(value)
     if (t && t !== text) {
-      hs.logThrow (`Redact collision ${value}: ${t} and ${text}: index ${index}\n- try using a longer hash name list`)
+      hs.logThrow(`Redact collision ${value}: ${t} and ${text}: index ${index}\n- try using a longer hash name list`)
     }
     if (!t) collisionMap.set(value, text)
 
@@ -316,12 +327,12 @@ const Helpers = {
     const ps = pickFiddler.getSheet().getName()
     pickFiddler.filterRows(row => row[prop])
     const data = pickFiddler.getData()
-    if (data.length !== 1) this.logThrow (`missing or ambiguous configuration sheet pick in ${ps}`)
+    if (data.length !== 1) this.logThrow(`missing or ambiguous configuration sheet pick in ${ps}`)
     // the first row in the pick file
     const [d] = data
       ;[useActiveProp, respectProp, respectHiddenRowsProp, prop, enableLoggingProp]
         .forEach(prop => {
-          if (!Reflect.has(d, prop)) this.logThrow (`missing or ambiguous ${prop} in ${ps}`)
+          if (!Reflect.has(d, prop)) this.logThrow(`missing or ambiguous ${prop} in ${ps}`)
         })
 
     // whether to respect pick drop down or to use current configuration sheet
@@ -374,14 +385,14 @@ const Helpers = {
     const eSheet = edgesFiddler.getSheet()
     const metaVertices = Exports.DeveloperData.getDob(vSheet, as.dobKey)
     const metaEdges = Exports.DeveloperData.getDob(eSheet, as.dobKey)
-    as.writeLog ('...fetching metadata for',vSheet.getName(), eSheet.getName(),metaVertices )
+    as.writeLog('...fetching metadata for', vSheet.getName(), eSheet.getName(), metaVertices)
 
     // they should be the same
     if (!metaVertices || !metaEdges)
-      this.logThrow ('cant find stamp of which config wrote this - run ingest again')
+      this.logThrow('cant find stamp of which config wrote this - run ingest again')
 
     if (JSON.stringify(metaVertices) !== JSON.stringify(metaEdges)) {
-      this.logThrow ('the edges and vertices were not created by the same time/configuration - run ingest again')
+      this.logThrow('the edges and vertices were not created by the same time/configuration - run ingest again')
     }
 
     return metaVertices.configuration
@@ -421,10 +432,10 @@ const Helpers = {
 
     // specific to this run
     const { gmlTemplate } = as
-    if (!gmlTemplate) this.logThrow (`must run script/setup first`)
+    if (!gmlTemplate) this.logThrow(`must run script/setup first`)
 
     const ss = SpreadsheetApp.openById(configId)
-    if (!ss) this.logThrow ('cant find an active or test ${testId} config spreadsheet')
+    if (!ss) this.logThrow('cant find an active or test ${testId} config spreadsheet')
 
     as.writeLog(
       'setting up project version',
