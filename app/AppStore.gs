@@ -196,22 +196,22 @@ const AppStore = {
 
 
   //----getting and setting values in store------------------
-  get breaking () {
+  get breaking() {
     return this.memory.get('breaking')
   },
-  set breaking (value) {
-    return this.memory.set ('breaking', value)
+  set breaking(value) {
+    return this.memory.set('breaking', value)
   },
-  get brokenBefore () {
+  get brokenBefore() {
     return this.memory.get('brokenBefore')
   },
-  set brokenBefore (value) {
-    return this.memory.set ('brokenBefore', value)
+  set brokenBefore(value) {
+    return this.memory.set('brokenBefore', value)
   },
   // the stub will set a value for breaking
   // if its less than this value then there's been a breaking change in the
   // library that needs a stub change
-  isBroken () {
+  isBroken() {
     const u = Exports.Utils
     const as = this
     const minStub = as.brokenBefore
@@ -606,12 +606,17 @@ const AppStore = {
       .question
       .values
       .forEach(question => {
-        // a blank data source means the question applies to alldata sources
+        /* datamap contains all the input data
+          datakeys is where to find the question text for each quesion (which may differ for each dataset)
+          to avoid repetition, a blank data key means it
+          can be used to apply to all datamaps
+        */
         const dKeys = u.isSheetsNU(question.questionDataSource) ?
           Array.from(dataMap.keys()) : [question.questionDataSource]
 
         dKeys.forEach(k => {
           const ds = dataMap.get(k)
+
           if (ds) {
             const av = vertex.get(question.questionAlias)
             const ae = edge.get(question.questionAlias)
@@ -839,12 +844,12 @@ const AppStore = {
 
     // E3
     // remove the [name] part
-    const qbase = questionText.replace (/\[.*\]/,"")
+    const qbase = questionText.replace(/\[.*\]/, "")
     // the question may have special rx chars in it
     const qesc = u.escapeStringforRx(qbase)
     // append a matcher for [ghostname]
     const qescrx = `(${qesc})\\[(.*)\\]`
-    const qrx = new RegExp (qescrx)
+    const qrx = new RegExp(qescrx)
 
     // find all questions that look like this one
     const questionsLikeThis = Array.from(headerSet.keys()).filter(f => f.match(qrx))
@@ -872,6 +877,7 @@ const AppStore = {
   generateGhosts({ edge, dataMap, vertex }) {
     const as = this
     const u = Exports.Utils
+    const hs = Exports.Helpers
 
     // each edge in the sheet
     // there's no return value as we'll add a prop to each dataMap item
@@ -882,7 +888,9 @@ const AppStore = {
 
       for (let edgeValue of edge.values()) {
         const { dataSources } = edgeValue
-
+        if (!dataSources) {
+          hs.logThrow(`edge ${edgeValue.edge} missing - have you assigned a question text?`)
+        }
         // this finds the edge definition in the current data set alias - alias will be somethinglike t1
         const ds = dataSources.get(alias)
         if (!ds) hs.logThrow(`Couldn't establish data source for ${edgeValue.alias} in dataset ${alias}`)
@@ -956,7 +964,9 @@ const AppStore = {
       } = edge
 
 
-      if (!dataSources) hs.logThrow(`Missing dataSources for edge ${edge.edge} - check they are accurately named in the config and have an associated question`)
+      if (!dataSources) {
+        hs.logThrow(`Missing dataSources for edge ${edge.edge} - check they are accurately named in the config and have an associated question`)
+      }
 
       // see if there's a transformer needed
       const transformer = as.getEdgeTransformer({ edge, transformerMap })
@@ -1077,7 +1087,15 @@ const AppStore = {
                   model[edgeGridSubject] = edge.alias
                   // the original value
                   model[edgeGridValue] = value
-                  if (transformProp) model[transformProp] = transformed
+                  if (transformProp) {
+                    // it's possible we have multiple transform output values
+                    const tvs = u.isString(transformed) ? transformed.split(":"): [transformed]
+                    // the first is the main one
+                    const [tv] = tvs
+                    model[transformProp] = tv
+                    // if there are more, we need to add extra columns
+                    tvs.slice(1).forEach ((f,i)=>model[`${transformProp}:${i+1}`] = f)
+                  }
 
                   // special handling of null values from transformer
                   const drop = transformer &&
